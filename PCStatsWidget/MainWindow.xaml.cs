@@ -27,11 +27,18 @@ public partial class MainWindow : Window
     private bool _isUpdatingMetrics;
 
     // Renk Fırçaları
-    private static readonly SolidColorBrush BrushGood = new(Color.FromRgb(0x00, 0xE6, 0x76));    // Yeşil
-    private static readonly SolidColorBrush BrushCyan = new(Color.FromRgb(0x38, 0xBD, 0xF8));    // Açık Mavi
-    private static readonly SolidColorBrush BrushWarning = new(Color.FromRgb(0xFB, 0xBF, 0x24)); // Sarı/Turuncu
-    private static readonly SolidColorBrush BrushDanger = new(Color.FromRgb(0xEF, 0x44, 0x44));  // Kırmızı
-    private static readonly SolidColorBrush BrushMuted = new(Color.FromRgb(0x94, 0xA3, 0xB8));   // Gri
+    private static readonly SolidColorBrush BrushGood = CreateFrozenBrush(0x00, 0xE6, 0x76);    // Yeşil
+    private static readonly SolidColorBrush BrushCyan = CreateFrozenBrush(0x38, 0xBD, 0xF8);    // Açık Mavi
+    private static readonly SolidColorBrush BrushWarning = CreateFrozenBrush(0xFB, 0xBF, 0x24); // Sarı/Turuncu
+    private static readonly SolidColorBrush BrushDanger = CreateFrozenBrush(0xEF, 0x44, 0x44);  // Kırmızı
+    private static readonly SolidColorBrush BrushMuted = CreateFrozenBrush(0x94, 0xA3, 0xB8);   // Gri
+
+    private static SolidColorBrush CreateFrozenBrush(byte r, byte g, byte b)
+    {
+        var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+        brush.Freeze();
+        return brush;
+    }
 
     public MainWindow()
     {
@@ -161,8 +168,6 @@ public partial class MainWindow : Window
             string cpuTempStr = hw.CpuTemp.HasValue ? $"{hw.CpuTemp.Value:F0}°C" : "N/A";
             TxtCpuTemp.Text = cpuTempStr;
             TxtCpuTemp.Foreground = GetTemperatureBrush(hw.CpuTemp);
-
-            TxtCompactCpu.Text = $"{hw.CpuUsage:F0}%  {cpuTempStr}";
 
             // 3. GPU Güncellemesi
             TxtGpuName.Text = hw.GpuName;

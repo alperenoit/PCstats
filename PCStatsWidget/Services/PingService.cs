@@ -4,9 +4,9 @@ namespace PCStatsWidget.Services;
 
 public sealed class PingService : IDisposable
 {
-    private readonly Ping _ping = new();
-    private readonly string[] _targets = ["1.1.1.1", "8.8.8.8", "208.67.222.222"];
-    private readonly string[] _targetNames = ["Cloudflare (1.1.1.1)", "Google (8.8.8.8)", "OpenDNS"];
+    private readonly Ping _ping = new Ping();
+    private readonly string[] _targets = new string[] { "1.1.1.1", "8.8.8.8", "208.67.222.222" };
+    private readonly string[] _targetNames = new string[] { "Cloudflare (1.1.1.1)", "Google (8.8.8.8)", "OpenDNS" };
     private int _currentTargetIndex;
 
     public long LastPingMs { get; private set; } = -1;

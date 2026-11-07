@@ -1,9 +1,6 @@
 C:\Users\AAA\Desktop\Ben\DevProjects\PCstats\PCStatsWidget\obj\Debug\net9.0-windows\PCStatsWidget.csproj.AssemblyReference.cache
-C:\Users\AAA\Desktop\Ben\DevProjects\PCstats\PCStatsWidget\obj\Debug\net9.0-windows\MainWindow.baml
-C:\Users\AAA\Desktop\Ben\DevProjects\PCstats\PCStatsWidget\obj\Debug\net9.0-windows\MainWindow.g.cs
 C:\Users\AAA\Desktop\Ben\DevProjects\PCstats\PCStatsWidget\obj\Debug\net9.0-windows\App.g.cs
 C:\Users\AAA\Desktop\Ben\DevProjects\PCstats\PCStatsWidget\obj\Debug\net9.0-windows\PCStatsWidget_MarkupCompile.cache
-C:\Users\AAA\Desktop\Ben\DevProjects\PCstats\PCStatsWidget\obj\Debug\net9.0-windows\PCStatsWidget.g.resources
 C:\Users\AAA\Desktop\Ben\DevProjects\PCstats\PCStatsWidget\obj\Debug\net9.0-windows\PCStatsWidget.GeneratedMSBuildEditorConfig.editorconfig
 C:\Users\AAA\Desktop\Ben\DevProjects\PCstats\PCStatsWidget\obj\Debug\net9.0-windows\PCStatsWidget.AssemblyInfoInputs.cache
 C:\Users\AAA\Desktop\Ben\DevProjects\PCstats\PCStatsWidget\obj\Debug\net9.0-windows\PCStatsWidget.AssemblyInfo.cs
@@ -68,3 +65,4 @@ C:\Users\AAA\Desktop\Ben\DevProjects\PCstats\PCStatsWidget\obj\Debug\net9.0-wind
 C:\Users\AAA\Desktop\Ben\DevProjects\PCstats\PCStatsWidget\obj\Debug\net9.0-windows\PCStatsWidget.pdb
 C:\Users\AAA\Desktop\Ben\DevProjects\PCstats\PCStatsWidget\obj\Debug\net9.0-windows\PCStatsWidget.genruntimeconfig.cache
 C:\Users\AAA\Desktop\Ben\DevProjects\PCstats\PCStatsWidget\obj\Debug\net9.0-windows\ref\PCStatsWidget.dll
+C:\Users\AAA\Desktop\Ben\DevProjects\PCstats\PCStatsWidget\obj\Debug\net9.0-windows\PCStatsWidget.sourcelink.json

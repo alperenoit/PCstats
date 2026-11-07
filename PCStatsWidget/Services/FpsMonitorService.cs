@@ -7,14 +7,14 @@ namespace PCStatsWidget.Services;
 public sealed class FpsMonitorService : IDisposable
 {
     // ETW Provider GUIDs for DirectX Frame Present events
-    private static readonly Guid DxgiProviderGuid = new("CA11C036-0102-4A2D-A6AD-F03CFED5D3C9");
-    private static readonly Guid D3D9ProviderGuid = new("783ACA0A-790E-4D7F-8451-AA850511C6B9");
+    private static readonly Guid DxgiProviderGuid = new Guid("CA11C036-0102-4A2D-A6AD-F03CFED5D3C9");
+    private static readonly Guid D3D9ProviderGuid = new Guid("783ACA0A-790E-4D7F-8451-AA850511C6B9");
 
     private const ushort DXGI_PRESENT_START_EVENT_ID = 42;
     private const ushort D3D9_PRESENT_START_EVENT_ID = 1;
     private const string SESSION_NAME = "PCStatsWidget_FPS_ETW_Session";
 
-    private readonly ConcurrentDictionary<uint, ConcurrentQueue<long>> _processFrames = new();
+    private readonly ConcurrentDictionary<uint, ConcurrentQueue<long>> _processFrames = new ConcurrentDictionary<uint, ConcurrentQueue<long>>();
     private readonly uint _currentAppPid = (uint)Environment.ProcessId;
 
     private ulong _sessionHandle;
@@ -219,6 +219,8 @@ public sealed class FpsMonitorService : IDisposable
             {
                 LoggerName = SESSION_NAME,
                 ProcessTraceMode = PROCESS_TRACE_MODE_REAL_TIME | PROCESS_TRACE_MODE_EVENT_RECORD,
+                CurrentEventPadding = new byte[328],
+                LogfileHeaderPadding = new byte[112],
                 EventRecordCallback = _callbackDelegate
             };
 
@@ -230,7 +232,7 @@ public sealed class FpsMonitorService : IDisposable
             }
 
             IsEtwActive = true;
-            ulong[] handles = [_traceHandle];
+            ulong[] handles = new ulong[] { _traceHandle };
             ProcessTrace(handles, 1, IntPtr.Zero, IntPtr.Zero);
         }
         catch
