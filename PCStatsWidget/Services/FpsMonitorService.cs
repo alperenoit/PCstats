@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Windows.Media;
 
 namespace PCStatsWidget.Services;
 
@@ -10,11 +11,25 @@ public sealed class FpsMonitorService : IDisposable
     private static readonly Guid DxgiProviderGuid = new Guid("CA11C036-0102-4A2D-A6AD-F03CFED5D3C9");
     private static readonly Guid D3D9ProviderGuid = new Guid("783ACA0A-790E-4D7F-8451-AA850511C6B9");
 
+    // Masaüstü / Tarayıcı / Editör süreçleri (bunların 1-2 FPS'lik imleç yanıp sönmeleri oyun FPS'i değildir)
+    private static readonly HashSet<string> NonGameProcessNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "explorer", "dwm", "SearchHost", "ShellExperienceHost", "StartMenuExperienceHost",
+        "TextInputHost", "ApplicationFrameHost", "SystemSettings", "Taskmgr",
+        "code", "antigravity", "devenv", "rider64",
+        "chrome", "msedge", "firefox", "brave", "opera",
+        "discord", "spotify", "steamwebhelper", "epicgameslauncher",
+        "cmd", "powershell", "pwsh", "WindowsTerminal", "conhost",
+        "PCStatsWidget"
+    };
+
     private const ushort DXGI_PRESENT_START_EVENT_ID = 42;
     private const ushort D3D9_PRESENT_START_EVENT_ID = 1;
     private const string SESSION_NAME = "PCStatsWidget_FPS_ETW_Session";
 
     private readonly ConcurrentDictionary<uint, ConcurrentQueue<long>> _processFrames = new ConcurrentDictionary<uint, ConcurrentQueue<long>>();
+    private readonly ConcurrentDictionary<uint, bool> _processIsGameCache = new ConcurrentDictionary<uint, bool>();
+    private readonly ConcurrentQueue<long> _wpfRenderFrames = new ConcurrentQueue<long>();
     private readonly uint _currentAppPid = (uint)Environment.ProcessId;
 
     private ulong _sessionHandle;
@@ -23,18 +38,33 @@ public sealed class FpsMonitorService : IDisposable
     private volatile bool _running;
     private EventRecordCallback? _callbackDelegate;
 
-    // DWM fallback fields
-    private ulong _lastDwmRefreshCount;
-    private long _lastDwmTimestamp;
-    private int _lastCalculatedFps;
-    private string _fpsSource = "DWM";
+    private int _displayRefreshRate = 60;
+    private string _fpsSource = "Ekran";
 
     public string FpsSource => _fpsSource;
     public bool IsEtwActive { get; private set; }
 
     public FpsMonitorService()
     {
+        _displayRefreshRate = QueryDisplayRefreshRate();
+
+        // WPF VSync Rendering olayını dinle (canlı ekran kompozisyon FPS ölçümü için)
+        CompositionTarget.Rendering += OnWpfCompositionRendering;
+
         StartEtwSession();
+    }
+
+    private void OnWpfCompositionRendering(object? sender, EventArgs e)
+    {
+        long now = Stopwatch.GetTimestamp();
+        _wpfRenderFrames.Enqueue(now);
+
+        // Kuyruğu temiz tut
+        long twoSecondsAgo = now - (Stopwatch.Frequency * 2);
+        while (_wpfRenderFrames.TryPeek(out long oldTs) && oldTs < twoSecondsAgo)
+        {
+            _wpfRenderFrames.TryDequeue(out _);
+        }
     }
 
     public int GetCurrentFps()
@@ -44,29 +74,32 @@ public sealed class FpsMonitorService : IDisposable
 
         uint foregroundPid = Win32Helper.GetForegroundProcessId();
 
-        // 1. Öncelik: Ön plandaki uygulamanın (oyunun) DXGI / D3D9 Present kareleri
-        if (foregroundPid != 0 && foregroundPid != _currentAppPid &&
-            _processFrames.TryGetValue(foregroundPid, out var fgQueue))
+        // 1. Öncelik: Ön plandaki uygulama gerçek bir 3D Oyun ise ETW DXGI/D3D9 Present sayısını al
+        if (foregroundPid != 0 && foregroundPid != _currentAppPid && IsLikelyGameProcess(foregroundPid))
         {
-            while (fgQueue.TryPeek(out long ts) && ts < oneSecondAgo)
+            if (_processFrames.TryGetValue(foregroundPid, out var fgQueue))
             {
-                fgQueue.TryDequeue(out _);
-            }
+                while (fgQueue.TryPeek(out long ts) && ts < oneSecondAgo)
+                {
+                    fgQueue.TryDequeue(out _);
+                }
 
-            int count = fgQueue.Count;
-            if (count > 0)
-            {
-                _fpsSource = "3D/Oyun";
-                _lastCalculatedFps = count;
-                return count;
+                int count = fgQueue.Count;
+                // Gerçek bir oyun döngüsü en az 8+ FPS sürekli kare üretir (1-2 FPS masaüstü imleç yanıp sönmesidir)
+                if (count >= 8)
+                {
+                    _fpsSource = "3D/Oyun";
+                    return count;
+                }
             }
         }
 
-        // 2. Öncelik: Eğer kullanıcı widget'a tıkladıysa bile arka planda çalışan en aktif 3D oyunun FPS'i
+        // 2. Öncelik: Arka planda veya çerçevesiz pencerede aktif çalışan bir 3D Oyun var mı?
         int maxGameFps = 0;
         foreach (var kvp in _processFrames)
         {
-            if (kvp.Key == _currentAppPid) continue;
+            uint pid = kvp.Key;
+            if (pid == _currentAppPid || !IsLikelyGameProcess(pid)) continue;
 
             var q = kvp.Value;
             while (q.TryPeek(out long ts) && ts < oneSecondAgo)
@@ -81,75 +114,79 @@ public sealed class FpsMonitorService : IDisposable
             }
         }
 
-        if (maxGameFps > 5)
+        if (maxGameFps >= 12)
         {
             _fpsSource = "3D/Oyun";
-            _lastCalculatedFps = maxGameFps;
             return maxGameFps;
         }
 
-        // 3. Öncelik: DWM (Desktop Window Manager) gerçek zamanlı ekran yenileme / kompozisyon FPS'i
-        int dwmFps = GetDwmCompositionFps(now);
-        if (dwmFps > 0)
-        {
-            _fpsSource = "Ekran";
-            _lastCalculatedFps = dwmFps;
-            return dwmFps;
-        }
-
-        return _lastCalculatedFps;
+        // 3. Öncelik: Masaüstü / Ekran gerçek zamanlı VSync yenileme hızı
+        _fpsSource = "Ekran";
+        return GetScreenRefreshFps(now, oneSecondAgo);
     }
 
-    private int GetDwmCompositionFps(long nowTimestamp)
+    private int GetScreenRefreshFps(long now, long oneSecondAgo)
+    {
+        int hz = QueryDisplayRefreshRate();
+        if (hz > 0)
+        {
+            _displayRefreshRate = hz;
+        }
+
+        while (_wpfRenderFrames.TryPeek(out long ts) && ts < oneSecondAgo)
+        {
+            _wpfRenderFrames.TryDequeue(out _);
+        }
+
+        int renderedInLastSec = _wpfRenderFrames.Count;
+
+        // Eğer WPF VSync tam hızda koşuyorsa onu döndür, aksi halde DWM/Monitör aktif Hz değerini döndür
+        if (renderedInLastSec >= _displayRefreshRate - 5 && renderedInLastSec <= _displayRefreshRate + 5)
+        {
+            return renderedInLastSec;
+        }
+
+        return _displayRefreshRate;
+    }
+
+    private bool IsLikelyGameProcess(uint pid)
+    {
+        if (_processIsGameCache.TryGetValue(pid, out bool cached))
+            return cached;
+
+        try
+        {
+            using var proc = Process.GetProcessById((int)pid);
+            string name = proc.ProcessName;
+            bool isGame = !NonGameProcessNames.Contains(name);
+            _processIsGameCache[pid] = isGame;
+            return isGame;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static int QueryDisplayRefreshRate()
     {
         try
         {
-            var timingInfo = new DWM_TIMING_INFO
+            var devMode = new DEVMODEW();
+            devMode.dmSize = (ushort)Marshal.SizeOf<DEVMODEW>();
+            if (EnumDisplaySettingsW(null, ENUM_CURRENT_SETTINGS, ref devMode))
             {
-                cbSize = (uint)Marshal.SizeOf<DWM_TIMING_INFO>()
-            };
-
-            int hr = DwmGetCompositionTimingInfo(IntPtr.Zero, ref timingInfo);
-            if (hr == 0)
-            {
-                ulong currentRefresh = timingInfo.cRefresh;
-                if (_lastDwmTimestamp > 0 && currentRefresh >= _lastDwmRefreshCount)
+                if (devMode.dmDisplayFrequency is > 10 and <= 1000)
                 {
-                    double elapsedSeconds = (double)(nowTimestamp - _lastDwmTimestamp) / Stopwatch.Frequency;
-                    if (elapsedSeconds >= 0.25)
-                    {
-                        ulong deltaFrames = currentRefresh - _lastDwmRefreshCount;
-                        int fps = (int)Math.Round(deltaFrames / elapsedSeconds);
-                        _lastDwmRefreshCount = currentRefresh;
-                        _lastDwmTimestamp = nowTimestamp;
-
-                        if (fps > 0 && fps <= 1000)
-                        {
-                            return fps;
-                        }
-                    }
-                }
-                else
-                {
-                    _lastDwmRefreshCount = currentRefresh;
-                    _lastDwmTimestamp = nowTimestamp;
-                }
-
-                // İlk ölçümde qpcRefreshPeriod veya rateRefresh oranını kullan
-                if (timingInfo.rateRefresh.uiDenominator > 0)
-                {
-                    int rate = (int)Math.Round((double)timingInfo.rateRefresh.uiNumerator / timingInfo.rateRefresh.uiDenominator);
-                    if (rate > 0 && rate <= 1000)
-                        return rate;
+                    return (int)devMode.dmDisplayFrequency;
                 }
             }
         }
         catch
         {
-            // DWM erişilemezse sessizce geç
+            // Hata olursa 60 Hz varsayılan
         }
-
-        return _lastCalculatedFps > 0 ? _lastCalculatedFps : 60;
+        return 60;
     }
 
     private void StartEtwSession()
@@ -186,15 +223,13 @@ public sealed class FpsMonitorService : IDisposable
                 {
                     BufferSize = (uint)totalSize,
                     Flags = WNODE_FLAG_TRACED_GUID,
-                    ClientContext = 1 // QPC clock resolution
+                    ClientContext = 1
                 },
                 LogFileMode = EVENT_TRACE_REAL_TIME_MODE,
                 LoggerNameOffset = (uint)Marshal.SizeOf<EVENT_TRACE_PROPERTIES>()
             };
 
             Marshal.StructureToPtr(props, propPtr, false);
-
-            // Önceki kalmış oturumu temizle
             ControlTraceW(0, SESSION_NAME, propPtr, EVENT_TRACE_CONTROL_STOP);
 
             RtlZeroMemory(propPtr, (UIntPtr)totalSize);
@@ -207,7 +242,6 @@ public sealed class FpsMonitorService : IDisposable
                 return;
             }
 
-            // DXGI ve D3D9 sağlayıcılarını etkinleştir
             Guid dxgiGuid = DxgiProviderGuid;
             EnableTraceEx2(_sessionHandle, ref dxgiGuid, EVENT_CONTROL_CODE_ENABLE_PROVIDER, TRACE_LEVEL_INFORMATION, 0, 0, 0, IntPtr.Zero);
 
@@ -272,6 +306,8 @@ public sealed class FpsMonitorService : IDisposable
     public void Dispose()
     {
         _running = false;
+        CompositionTarget.Rendering -= OnWpfCompositionRendering;
+
         try
         {
             if (_traceHandle != INVALID_PROCESSTRACE_HANDLE)
@@ -298,12 +334,13 @@ public sealed class FpsMonitorService : IDisposable
         }
         catch
         {
-            // Kapanışta hataları yut
+            // Kapanış hatalarını yoksay
         }
     }
 
-    #region Native Win32 ETW & DWM Interop
+    #region Native Win32 ETW & Display Interop
 
+    private const int ENUM_CURRENT_SETTINGS = -1;
     private const uint WNODE_FLAG_TRACED_GUID = 0x00020000;
     private const uint EVENT_TRACE_REAL_TIME_MODE = 0x00000100;
     private const uint EVENT_TRACE_CONTROL_STOP = 1;
@@ -315,6 +352,9 @@ public sealed class FpsMonitorService : IDisposable
 
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     private delegate void EventRecordCallback(ref EVENT_RECORD EventRecord);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool EnumDisplaySettingsW(string? lpszDeviceName, int iModeNum, ref DEVMODEW lpDevMode);
 
     [DllImport("kernel32.dll")]
     private static extern void RtlZeroMemory(IntPtr dst, UIntPtr length);
@@ -345,8 +385,42 @@ public sealed class FpsMonitorService : IDisposable
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern uint CloseTrace(ulong TraceHandle);
 
-    [DllImport("dwmapi.dll")]
-    private static extern int DwmGetCompositionTimingInfo(IntPtr hwnd, ref DWM_TIMING_INFO pTimingInfo);
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct DEVMODEW
+    {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string dmDeviceName;
+        public ushort dmSpecVersion;
+        public ushort dmDriverVersion;
+        public ushort dmSize;
+        public ushort dmDriverExtra;
+        public uint dmFields;
+        public int dmPositionX;
+        public int dmPositionY;
+        public uint dmDisplayOrientation;
+        public uint dmDisplayFixedOutput;
+        public short dmColor;
+        public short dmDuplex;
+        public short dmYResolution;
+        public short dmTTOption;
+        public short dmCollate;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string dmFormName;
+        public ushort dmLogPixels;
+        public uint dmBitsPerPel;
+        public uint dmPelsWidth;
+        public uint dmPelsHeight;
+        public uint dmDisplayFlags;
+        public uint dmDisplayFrequency;
+        public uint dmICMMethod;
+        public uint dmICMIntent;
+        public uint dmMediaType;
+        public uint dmDitherType;
+        public uint dmReserved1;
+        public uint dmReserved2;
+        public uint dmPanningWidth;
+        public uint dmPanningHeight;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct WNODE_HEADER
@@ -452,58 +526,6 @@ public sealed class FpsMonitorService : IDisposable
         public IntPtr ExtendedData;
         public IntPtr UserData;
         public IntPtr UserContext;
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    private struct UNSIGNED_RATIO
-    {
-        public uint uiNumerator;
-        public uint uiDenominator;
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    private struct DWM_TIMING_INFO
-    {
-        public uint cbSize;
-        public UNSIGNED_RATIO rateRefresh;
-        public ulong qpcRefreshPeriod;
-        public UNSIGNED_RATIO rateCompose;
-        public ulong qpcVBlank;
-        public ulong cRefresh;
-        public uint cDXRefresh;
-        public ulong qpcCompose;
-        public ulong cFrame;
-        public uint cDXPresent;
-        public ulong cRefreshFrame;
-        public ulong cFrameSubmitted;
-        public uint cDXPresentSubmitted;
-        public ulong cFrameConfirmed;
-        public uint cDXPresentConfirmed;
-        public ulong cRefreshConfirmed;
-        public uint cDXRefreshConfirmed;
-        public ulong cFramesLate;
-        public uint cFramesOutstanding;
-        public ulong cFrameDisplayed;
-        public ulong qpcFrameDisplayed;
-        public ulong cRefreshFrameDisplayed;
-        public ulong cFrameComplete;
-        public ulong qpcFrameComplete;
-        public ulong cFramePending;
-        public ulong qpcFramePending;
-        public ulong cFramesDisplayed;
-        public ulong cFramesComplete;
-        public ulong cFramesPending;
-        public ulong cFramesAvailable;
-        public ulong cFramesDropped;
-        public ulong cFramesMissed;
-        public ulong cRefreshNextDisplayed;
-        public ulong cRefreshNextPresented;
-        public ulong cRefreshesDisplayed;
-        public ulong cRefreshesPresented;
-        public ulong cRefreshStarted;
-        public ulong cPixelsReceived;
-        public ulong cPixelsDrawn;
-        public ulong cBuffersEmpty;
     }
 
     #endregion

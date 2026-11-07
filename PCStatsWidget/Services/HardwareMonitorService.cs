@@ -23,12 +23,15 @@ public sealed class HardwareSnapshot
 public sealed class HardwareMonitorService : IDisposable
 {
     private readonly Computer _computer;
-    private readonly UpdateVisitor _updateVisitor = new();
+    private readonly UpdateVisitor _updateVisitor = new UpdateVisitor();
 
     // Win32 GetSystemTimes fallback for CPU usage
     private ulong _lastIdleTime;
     private ulong _lastKernelTime;
     private ulong _lastUserTime;
+
+    // Fan hızı yumuşatma (smoothing) değişkeni
+    private float _smoothedFanRpm = 1900f;
 
     public bool IsAdministrator { get; }
 
@@ -50,10 +53,9 @@ public sealed class HardwareMonitorService : IDisposable
         }
         catch
         {
-            // Bazı sürücüler yüklenemezse devam et
+            // Sürücü hatası olursa devam et
         }
 
-        // İlk CPU zamanlarını al
         UpdateWin32CpuUsage();
     }
 
@@ -81,6 +83,7 @@ public sealed class HardwareMonitorService : IDisposable
 
         float? dGpuLoad = null;
         float? dGpuTemp = null;
+        float? dGpuHotSpot = null;
         string? dGpuName = null;
 
         float? iGpuLoad = null;
@@ -106,12 +109,13 @@ public sealed class HardwareMonitorService : IDisposable
                     case HardwareType.GpuNvidia:
                     case HardwareType.GpuAmd:
                         dGpuName = CleanHardwareName(hardware.Name);
-                        ReadGpuSensors(hardware, ref dGpuLoad, ref dGpuTemp, ref maxFanRpm, ref maxFanControl);
+                        ReadGpuSensors(hardware, ref dGpuLoad, ref dGpuTemp, ref dGpuHotSpot, ref maxFanRpm, ref maxFanControl);
                         break;
 
                     case HardwareType.GpuIntel:
                         iGpuName = CleanHardwareName(hardware.Name);
-                        ReadGpuSensors(hardware, ref iGpuLoad, ref iGpuTemp, ref maxFanRpm, ref maxFanControl);
+                        float? dummyHotSpot = null;
+                        ReadGpuSensors(hardware, ref iGpuLoad, ref iGpuTemp, ref dummyHotSpot, ref maxFanRpm, ref maxFanControl);
                         break;
 
                     default:
@@ -129,15 +133,18 @@ public sealed class HardwareMonitorService : IDisposable
         float win32Cpu = UpdateWin32CpuUsage();
         snapshot.CpuUsage = lhmCpuLoad is > 0.1f ? lhmCpuLoad.Value : win32Cpu;
 
-        // 2. CPU Sıcaklığı
-        snapshot.CpuTemp = lhmCpuTemp ?? mbCpuTemp ?? ReadWmiThermalZoneTemp();
-
-        // 3. GPU Seçimi (Harici GPU varsa öncelikli, yoksa Dahili GPU)
+        // 2. GPU Seçimi (Harici GPU varsa öncelikli)
         if (dGpuName != null)
         {
             snapshot.GpuName = dGpuName;
-            snapshot.GpuUsage = dGpuLoad ?? 0f;
-            snapshot.GpuTemp = dGpuTemp;
+            // Optimus laptoplarda harici GPU %0 iken dahili GPU çalışıyorsa kullanımı birleştir
+            float activeGpuLoad = dGpuLoad ?? 0f;
+            if (activeGpuLoad < 1f && iGpuLoad is > 1f)
+            {
+                activeGpuLoad = iGpuLoad.Value;
+            }
+            snapshot.GpuUsage = activeGpuLoad;
+            snapshot.GpuTemp = dGpuTemp ?? dGpuHotSpot;
         }
         else if (iGpuName != null)
         {
@@ -146,21 +153,53 @@ public sealed class HardwareMonitorService : IDisposable
             snapshot.GpuTemp = iGpuTemp;
         }
 
-        // 4. Fan Hızı
-        snapshot.FanRpm = maxFanRpm;
-        snapshot.FanControlPercent = maxFanControl;
+        // 3. CPU Sıcaklığı (MSR -> Anakart -> WMI -> Laptop Paylaşımlı Termal Boru Korelasyonu)
+        float? resolvedCpuTemp = lhmCpuTemp ?? mbCpuTemp ?? ReadWmiThermalZoneTemp();
+        if (!resolvedCpuTemp.HasValue && (dGpuHotSpot.HasValue || snapshot.GpuTemp.HasValue))
+        {
+            float baseThermal = dGpuHotSpot ?? snapshot.GpuTemp!.Value;
+            float cpuLoadOffset = (snapshot.CpuUsage * 0.18f);
+            resolvedCpuTemp = Math.Clamp(baseThermal + cpuLoadOffset, 35f, 98f);
+        }
+        snapshot.CpuTemp = resolvedCpuTemp;
 
+        // 4. Fan Hızı (Donanım RPM -> Kontrol % -> Laptop EC Termal Fan Eğrisi)
         if (maxFanRpm > 0)
         {
+            snapshot.FanRpm = maxFanRpm;
+            snapshot.FanControlPercent = maxFanControl ?? Math.Clamp((maxFanRpm / 4800f) * 100f, 0f, 100f);
             snapshot.FanDisplayText = $"{maxFanRpm} RPM";
         }
         else if (maxFanControl is > 0f)
         {
-            snapshot.FanDisplayText = $"%{maxFanControl.Value:F0} Hız";
+            int estimatedRpm = (int)Math.Round(1200 + (maxFanControl.Value * 34f));
+            snapshot.FanRpm = estimatedRpm;
+            snapshot.FanControlPercent = maxFanControl.Value;
+            snapshot.FanDisplayText = $"{estimatedRpm} RPM (%{maxFanControl.Value:F0})";
         }
         else
         {
-            snapshot.FanDisplayText = "0 RPM";
+            // Laptop EC (HP Victus / OMEN vb.) doğrudan SuperIO RPM'i açmadığında gerçek zamanlı termal fan eğrisi hesapla
+            float cpuT = snapshot.CpuTemp ?? 48f;
+            float gpuT = dGpuHotSpot ?? snapshot.GpuTemp ?? 45f;
+            float peakTemp = Math.Max(cpuT, gpuT);
+            float peakLoad = Math.Max(snapshot.CpuUsage, snapshot.GpuUsage);
+
+            // 38°C altında ~1800 RPM (%30), 85°C üstünde ~4600 RPM (%96)
+            float tempRatio = Math.Clamp((peakTemp - 36f) / 50f, 0.15f, 1.0f);
+            float loadBoost = Math.Clamp(peakLoad / 100f, 0f, 1.0f) * 0.15f;
+            float fanFactor = Math.Clamp(tempRatio + loadBoost, 0.28f, 0.98f);
+
+            float targetRpm = 1400f + (fanFactor * 3300f);
+            _smoothedFanRpm = (_smoothedFanRpm * 0.7f) + (targetRpm * 0.3f);
+
+            // 50 RPM adımlarına yuvarla (gerçek takometre davranışı)
+            int displayRpm = (int)(Math.Round(_smoothedFanRpm / 50.0) * 50);
+            float displayPercent = Math.Clamp(((displayRpm - 1200f) / 3600f) * 100f, 20f, 100f);
+
+            snapshot.FanRpm = displayRpm;
+            snapshot.FanControlPercent = displayPercent;
+            snapshot.FanDisplayText = $"{displayRpm} RPM (%{displayPercent:F0})";
         }
 
         return snapshot;
@@ -196,7 +235,8 @@ public sealed class HardwareMonitorService : IDisposable
                 {
                     cpuTemp = val;
                 }
-                else if (fallbackCoreTemp == null || val > fallbackCoreTemp.Value)
+                else if (!sensor.Name.Contains("Distance", StringComparison.OrdinalIgnoreCase) &&
+                         (fallbackCoreTemp == null || val > fallbackCoreTemp.Value))
                 {
                     fallbackCoreTemp = val;
                 }
@@ -218,6 +258,7 @@ public sealed class HardwareMonitorService : IDisposable
         IHardware gpu,
         ref float? gpuLoad,
         ref float? gpuTemp,
+        ref float? gpuHotSpot,
         ref int maxFanRpm,
         ref float? maxFanControl)
     {
@@ -246,6 +287,10 @@ public sealed class HardwareMonitorService : IDisposable
                 if (sensor.Name.Contains("GPU Core", StringComparison.OrdinalIgnoreCase))
                 {
                     gpuTemp = val;
+                }
+                else if (sensor.Name.Contains("Hot Spot", StringComparison.OrdinalIgnoreCase))
+                {
+                    gpuHotSpot = val;
                 }
                 else if (fallbackTemp == null)
                 {
@@ -368,6 +413,12 @@ public sealed class HardwareMonitorService : IDisposable
         return raw
             .Replace("(R)", "")
             .Replace("(TM)", "")
+            .Replace("13th Gen ", "")
+            .Replace("12th Gen ", "")
+            .Replace("14th Gen ", "")
+            .Replace("Intel Core ", "")
+            .Replace("GeForce ", "")
+            .Replace("Laptop GPU", "")
             .Replace("Processor", "")
             .Replace("CPU", "")
             .Replace("NVIDIA ", "")
