@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Management;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
@@ -22,22 +23,46 @@ public sealed class HardwareSnapshot
 
 public sealed class HardwareMonitorService : IDisposable
 {
+    private const uint HP_WMI_GM_COMMAND = 0x00020008;
+    private const uint HP_CMD_GET_FAN_SPEED_V1 = 0x11; // 17: Fan 1 & Fan 2 RPM (/100)
+    private const uint HP_CMD_GET_SENSOR_TEMP = 0x23;  // 35: GetSensorValue(sensorId) -> CPU/Sys Temp (°C)
+    private const uint HP_CMD_GET_FAN_LEVEL_V2 = 0x2D; // 45: GetFanLevel -> Fan 1 & Fan 2 RPM (/100)
+
+    private static readonly byte[] HpSecuSign = new byte[] { 0x53, 0x45, 0x43, 0x55 }; // "SECU"
+
     private readonly Computer _computer;
     private readonly UpdateVisitor _updateVisitor = new UpdateVisitor();
+    private readonly PerformanceCounter? _cpuUtilityCounter;
 
     // Win32 GetSystemTimes fallback for CPU usage
     private ulong _lastIdleTime;
     private ulong _lastKernelTime;
     private ulong _lastUserTime;
 
-    // Fan hızı yumuşatma (smoothing) değişkeni
-    private float _smoothedFanRpm = 1900f;
-
     public bool IsAdministrator { get; }
 
     public HardwareMonitorService()
     {
         IsAdministrator = CheckIsAdministrator();
+
+        // Windows 11 Görev Yöneticisi ile birebir aynı CPU kullanım sayacı (% Processor Utility)
+        try
+        {
+            _cpuUtilityCounter = new PerformanceCounter("Processor Information", "% Processor Utility", "_Total", true);
+            _ = _cpuUtilityCounter.NextValue();
+        }
+        catch
+        {
+            try
+            {
+                _cpuUtilityCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total", true);
+                _ = _cpuUtilityCounter.NextValue();
+            }
+            catch
+            {
+                _cpuUtilityCounter = null;
+            }
+        }
 
         _computer = new Computer
         {
@@ -53,7 +78,7 @@ public sealed class HardwareMonitorService : IDisposable
         }
         catch
         {
-            // Sürücü hatası olursa devam et
+            // Sürücü yüklenemezse diğer kaynaklarla devam et
         }
 
         UpdateWin32CpuUsage();
@@ -129,15 +154,26 @@ public sealed class HardwareMonitorService : IDisposable
             // Sensör okuma hatası olursa yedeklere geç
         }
 
-        // 1. CPU Kullanımı
+        // 1. CPU Kullanım Yüzdesi (Windows Görev Yöneticisi % Processor Utility -> LHM -> Win32)
         float win32Cpu = UpdateWin32CpuUsage();
-        snapshot.CpuUsage = lhmCpuLoad is > 0.1f ? lhmCpuLoad.Value : win32Cpu;
+        float? perfCounterCpu = ReadPerfCounterCpuUsage();
+        if (perfCounterCpu is > 0.1f)
+        {
+            snapshot.CpuUsage = Math.Clamp(perfCounterCpu.Value, 0f, 100f);
+        }
+        else if (lhmCpuLoad is > 0.1f)
+        {
+            snapshot.CpuUsage = Math.Clamp(lhmCpuLoad.Value, 0f, 100f);
+        }
+        else
+        {
+            snapshot.CpuUsage = win32Cpu;
+        }
 
         // 2. GPU Seçimi (Harici GPU varsa öncelikli)
         if (dGpuName != null)
         {
             snapshot.GpuName = dGpuName;
-            // Optimus laptoplarda harici GPU %0 iken dahili GPU çalışıyorsa kullanımı birleştir
             float activeGpuLoad = dGpuLoad ?? 0f;
             if (activeGpuLoad < 1f && iGpuLoad is > 1f)
             {
@@ -153,18 +189,44 @@ public sealed class HardwareMonitorService : IDisposable
             snapshot.GpuTemp = iGpuTemp;
         }
 
-        // 3. CPU Sıcaklığı (MSR -> Anakart -> WMI -> Laptop Paylaşımlı Termal Boru Korelasyonu)
-        float? resolvedCpuTemp = lhmCpuTemp ?? mbCpuTemp ?? ReadWmiThermalZoneTemp();
-        if (!resolvedCpuTemp.HasValue && (dGpuHotSpot.HasValue || snapshot.GpuTemp.HasValue))
-        {
-            float baseThermal = dGpuHotSpot ?? snapshot.GpuTemp!.Value;
-            float cpuLoadOffset = (snapshot.CpuUsage * 0.18f);
-            resolvedCpuTemp = Math.Clamp(baseThermal + cpuLoadOffset, 35f, 98f);
-        }
-        snapshot.CpuTemp = resolvedCpuTemp;
+        // 3. HP Victus / OMEN BIOS WMI Üzerinden Gerçek Fan RPM ve CPU Sıcaklığı Okuma
+        ReadHpVictusBiosSensors(out int hpFan1Rpm, out int hpFan2Rpm, out float? hpBiosCpuTemp);
 
-        // 4. Fan Hızı (Donanım RPM -> Kontrol % -> Laptop EC Termal Fan Eğrisi)
-        if (maxFanRpm > 0)
+        // 4. CPU Sıcaklığı Seçimi (LHM Intel MSR -> HP BIOS WMI EC Sensörü -> Anakart)
+        if (lhmCpuTemp is > 20f and < 115f)
+        {
+            snapshot.CpuTemp = lhmCpuTemp.Value;
+        }
+        else if (hpBiosCpuTemp is > 20f and < 115f)
+        {
+            snapshot.CpuTemp = hpBiosCpuTemp.Value;
+        }
+        else if (mbCpuTemp is > 20f and < 115f)
+        {
+            snapshot.CpuTemp = mbCpuTemp.Value;
+        }
+        else
+        {
+            snapshot.CpuTemp = null;
+        }
+
+        // 5. Fan Hızı Seçimi (HP BIOS WMI Gerçek Fan RPM -> LHM Fan RPM -> LHM Fan Control %)
+        if (hpFan1Rpm > 0 || hpFan2Rpm > 0)
+        {
+            int peakHpFan = Math.Max(hpFan1Rpm, hpFan2Rpm);
+            snapshot.FanRpm = peakHpFan;
+            snapshot.FanControlPercent = Math.Clamp((peakHpFan / 5200f) * 100f, 0f, 100f);
+
+            if (hpFan1Rpm > 0 && hpFan2Rpm > 0 && Math.Abs(hpFan1Rpm - hpFan2Rpm) >= 100)
+            {
+                snapshot.FanDisplayText = $"{hpFan1Rpm} / {hpFan2Rpm} RPM";
+            }
+            else
+            {
+                snapshot.FanDisplayText = $"{peakHpFan} RPM";
+            }
+        }
+        else if (maxFanRpm > 0)
         {
             snapshot.FanRpm = maxFanRpm;
             snapshot.FanControlPercent = maxFanControl ?? Math.Clamp((maxFanRpm / 4800f) * 100f, 0f, 100f);
@@ -172,37 +234,148 @@ public sealed class HardwareMonitorService : IDisposable
         }
         else if (maxFanControl is > 0f)
         {
-            int estimatedRpm = (int)Math.Round(1200 + (maxFanControl.Value * 34f));
-            snapshot.FanRpm = estimatedRpm;
+            snapshot.FanRpm = (int)Math.Round(maxFanControl.Value * 45f);
             snapshot.FanControlPercent = maxFanControl.Value;
-            snapshot.FanDisplayText = $"{estimatedRpm} RPM (%{maxFanControl.Value:F0})";
+            snapshot.FanDisplayText = $"%{maxFanControl.Value:F0} Hız";
         }
         else
         {
-            // Laptop EC (HP Victus / OMEN vb.) doğrudan SuperIO RPM'i açmadığında gerçek zamanlı termal fan eğrisi hesapla
-            float cpuT = snapshot.CpuTemp ?? 48f;
-            float gpuT = dGpuHotSpot ?? snapshot.GpuTemp ?? 45f;
-            float peakTemp = Math.Max(cpuT, gpuT);
-            float peakLoad = Math.Max(snapshot.CpuUsage, snapshot.GpuUsage);
-
-            // 38°C altında ~1800 RPM (%30), 85°C üstünde ~4600 RPM (%96)
-            float tempRatio = Math.Clamp((peakTemp - 36f) / 50f, 0.15f, 1.0f);
-            float loadBoost = Math.Clamp(peakLoad / 100f, 0f, 1.0f) * 0.15f;
-            float fanFactor = Math.Clamp(tempRatio + loadBoost, 0.28f, 0.98f);
-
-            float targetRpm = 1400f + (fanFactor * 3300f);
-            _smoothedFanRpm = (_smoothedFanRpm * 0.7f) + (targetRpm * 0.3f);
-
-            // 50 RPM adımlarına yuvarla (gerçek takometre davranışı)
-            int displayRpm = (int)(Math.Round(_smoothedFanRpm / 50.0) * 50);
-            float displayPercent = Math.Clamp(((displayRpm - 1200f) / 3600f) * 100f, 20f, 100f);
-
-            snapshot.FanRpm = displayRpm;
-            snapshot.FanControlPercent = displayPercent;
-            snapshot.FanDisplayText = $"{displayRpm} RPM (%{displayPercent:F0})";
+            snapshot.FanRpm = 0;
+            snapshot.FanControlPercent = 0f;
+            snapshot.FanDisplayText = "0 RPM";
         }
 
         return snapshot;
+    }
+
+    private float? ReadPerfCounterCpuUsage()
+    {
+        if (_cpuUtilityCounter == null) return null;
+        try
+        {
+            float val = _cpuUtilityCounter.NextValue();
+            if (val is >= 0f and <= 200f)
+            {
+                return Math.Clamp(val, 0f, 100f);
+            }
+        }
+        catch
+        {
+            // Sayaç okunamazsa geç
+        }
+        return null;
+    }
+
+    private static void ReadHpVictusBiosSensors(out int fan1Rpm, out int fan2Rpm, out float? cpuTemp)
+    {
+        fan1Rpm = 0;
+        fan2Rpm = 0;
+        cpuTemp = null;
+
+        try
+        {
+            var scope = new ManagementScope(@"\\.\root\wmi");
+            scope.Connect();
+
+            using var biosMethodsClass = new ManagementClass(scope, new ManagementPath("hpqBIntM"), null);
+            using var dataInClass = new ManagementClass(scope, new ManagementPath("hpqBDataIn"), null);
+
+            using ManagementObjectCollection instances = biosMethodsClass.GetInstances();
+            ManagementObject? biosInstance = null;
+            foreach (ManagementObject obj in instances)
+            {
+                biosInstance = obj;
+                break;
+            }
+
+            if (biosInstance == null) return;
+
+            // A) Fan Hızı Okuma: CommandType = 45 (0x2D - GetFanLevel: 100 RPM birimiyle Fan 1 ve Fan 2)
+            byte[]? fanData = InvokeHpBiosMethod(biosInstance, dataInClass, HP_WMI_GM_COMMAND, HP_CMD_GET_FAN_LEVEL_V2, new byte[4], "hpqBIOSInt128");
+            if (fanData != null && fanData.Length >= 2)
+            {
+                int f1 = fanData[0];
+                int f2 = fanData[1];
+
+                // HP Victus'ta değerler 100 RPM çarpanlıdır (örn. 24 = 2400 RPM, 52 = 5200 RPM)
+                if (f1 is > 0 and <= 85) fan1Rpm = f1 * 100;
+                if (f2 is > 0 and <= 85) fan2Rpm = f2 * 100;
+            }
+
+            // Eğer 0x2D'den 0 geldiyse eski nesil 0x11 (CommandType = 17) dene
+            if (fan1Rpm == 0 && fan2Rpm == 0)
+            {
+                byte[]? fanV1 = InvokeHpBiosMethod(biosInstance, dataInClass, HP_WMI_GM_COMMAND, HP_CMD_GET_FAN_SPEED_V1, new byte[4], "hpqBIOSInt128");
+                if (fanV1 != null && fanV1.Length >= 2)
+                {
+                    if (fanV1[0] is > 0 and <= 85) fan1Rpm = fanV1[0] * 100;
+                    if (fanV1[1] is > 0 and <= 85) fan2Rpm = fanV1[1] * 100;
+                }
+            }
+
+            // B) CPU Sıcaklığı Okuma: CommandType = 35 (0x23 - GetSensorValue(0))
+            byte[]? tempData = InvokeHpBiosMethod(biosInstance, dataInClass, HP_WMI_GM_COMMAND, HP_CMD_GET_SENSOR_TEMP, new byte[] { 0, 0, 0, 0 }, "hpqBIOSInt4")
+                            ?? InvokeHpBiosMethod(biosInstance, dataInClass, HP_WMI_GM_COMMAND, HP_CMD_GET_SENSOR_TEMP, new byte[] { 0, 0, 0, 0 }, "hpqBIOSInt128");
+
+            if (tempData != null && tempData.Length >= 1 && tempData[0] is > 20 and < 115)
+            {
+                cpuTemp = tempData[0];
+            }
+        }
+        catch
+        {
+            // HP WMI BIOS desteklenmiyorsa veya erişim yoksa sessizce geç
+        }
+    }
+
+    private static byte[]? InvokeHpBiosMethod(
+        ManagementObject biosInstance,
+        ManagementClass dataInClass,
+        uint command,
+        uint commandType,
+        byte[] inputPayload,
+        string methodName)
+    {
+        try
+        {
+            using ManagementBaseObject dataIn = dataInClass.CreateInstance();
+            dataIn["Sign"] = HpSecuSign;
+            dataIn["Command"] = command;
+            dataIn["CommandType"] = commandType;
+            dataIn["Size"] = (uint)inputPayload.Length;
+
+            // hpqBData alanını doldur
+            foreach (PropertyData prop in dataIn.Properties)
+            {
+                if (prop.Name.Equals("hpqBData", StringComparison.OrdinalIgnoreCase) ||
+                    prop.Name.Equals("Data", StringComparison.OrdinalIgnoreCase))
+                {
+                    prop.Value = inputPayload;
+                    break;
+                }
+            }
+
+            using ManagementBaseObject inParams = biosInstance.GetMethodParameters(methodName);
+            inParams["InData"] = dataIn;
+
+            using ManagementBaseObject? outParams = biosInstance.InvokeMethod(methodName, inParams, null);
+            if (outParams?["OutData"] is ManagementBaseObject outData)
+            {
+                foreach (PropertyData prop in outData.Properties)
+                {
+                    if (prop.Value is byte[] bytes && bytes.Length > 0)
+                    {
+                        return bytes;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Metot hatası olursa null dön
+        }
+
+        return null;
     }
 
     private static void ReadCpuSensors(
@@ -226,8 +399,11 @@ public sealed class HardwareMonitorService : IDisposable
                     cpuLoad = Math.Clamp(val, 0f, 100f);
                 }
             }
-            else if (sensor.SensorType == SensorType.Temperature && val is > 0f and < 130f)
+            else if (sensor.SensorType == SensorType.Temperature && val is > 20f and < 120f)
             {
+                if (sensor.Name.Contains("Distance", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
                 if (sensor.Name.Contains("Package", StringComparison.OrdinalIgnoreCase) ||
                     sensor.Name.Contains("Tctl", StringComparison.OrdinalIgnoreCase) ||
                     sensor.Name.Contains("Average", StringComparison.OrdinalIgnoreCase) ||
@@ -235,8 +411,7 @@ public sealed class HardwareMonitorService : IDisposable
                 {
                     cpuTemp = val;
                 }
-                else if (!sensor.Name.Contains("Distance", StringComparison.OrdinalIgnoreCase) &&
-                         (fallbackCoreTemp == null || val > fallbackCoreTemp.Value))
+                else if (fallbackCoreTemp == null || val > fallbackCoreTemp.Value)
                 {
                     fallbackCoreTemp = val;
                 }
@@ -282,7 +457,7 @@ public sealed class HardwareMonitorService : IDisposable
                         d3dLoad = Math.Clamp(val, 0f, 100f);
                 }
             }
-            else if (sensor.SensorType == SensorType.Temperature && val is > 0f and < 130f)
+            else if (sensor.SensorType == SensorType.Temperature && val is > 15f and < 125f)
             {
                 if (sensor.Name.Contains("GPU Core", StringComparison.OrdinalIgnoreCase))
                 {
@@ -335,11 +510,11 @@ public sealed class HardwareMonitorService : IDisposable
                 if (maxFanControl == null || val > maxFanControl.Value)
                     maxFanControl = val;
             }
-            else if (sensor.SensorType == SensorType.Temperature && val is > 10f and < 115f)
+            else if (sensor.SensorType == SensorType.Temperature && val is > 22f and < 115f)
             {
                 if (sensor.Name.Contains("CPU", StringComparison.OrdinalIgnoreCase) ||
                     sensor.Name.Contains("Package", StringComparison.OrdinalIgnoreCase) ||
-                     mbCpuTemp == null)
+                    mbCpuTemp == null)
                 {
                     mbCpuTemp = val;
                 }
@@ -376,37 +551,6 @@ public sealed class HardwareMonitorService : IDisposable
         return Math.Clamp(busy, 0f, 100f);
     }
 
-    private static float? ReadWmiThermalZoneTemp()
-    {
-        try
-        {
-            using var searcher = new ManagementObjectSearcher(
-                @"root\CIMV2",
-                "SELECT HighPrecisionTemperature, Temperature FROM Win32_PerfFormattedData_Counters_ThermalZoneInformation");
-
-            foreach (ManagementObject obj in searcher.Get())
-            {
-                if (obj["HighPrecisionTemperature"] is uint hpTemp && hpTemp > 2732)
-                {
-                    float c = (hpTemp / 10f) - 273.15f;
-                    if (c is > 10f and < 120f) return c;
-                }
-
-                if (obj["Temperature"] is uint temp && temp > 273)
-                {
-                    float c = temp - 273.15f;
-                    if (c is > 10f and < 120f) return c;
-                }
-            }
-        }
-        catch
-        {
-            // WMI termal bölge desteklenmiyorsa geç
-        }
-
-        return null;
-    }
-
     private static string CleanHardwareName(string raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return "Donanım";
@@ -430,6 +574,7 @@ public sealed class HardwareMonitorService : IDisposable
     {
         try
         {
+            _cpuUtilityCounter?.Dispose();
             _computer.Close();
         }
         catch
