@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("PCStatsWidget")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+c089f21863df0e29c17bda5d36b9f7f0980bfd20")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+041ebad858579ada363b698a863ce443cbed0cb8")]
 [assembly: System.Reflection.AssemblyProductAttribute("PCStatsWidget")]
 [assembly: System.Reflection.AssemblyTitleAttribute("PCStatsWidget")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "dgSpecHash": "QSQB8kwCpbg=",
+  "dgSpecHash": "c6vwig6SIlc=",
   "success": true,
   "projectFilePath": "C:\\Users\\AAA\\Desktop\\Ben\\DevProjects\\PCstats\\PCStatsWidget\\PCStatsWidget.csproj",
   "expectedPackageFiles": [
@@ -8,6 +8,7 @@
     "C:\\Users\\AAA\\.nuget\\packages\\diskinfotoolkit\\1.1.2\\diskinfotoolkit.1.1.2.nupkg.sha512",
     "C:\\Users\\AAA\\.nuget\\packages\\hidsharp\\2.6.4\\hidsharp.2.6.4.nupkg.sha512",
     "C:\\Users\\AAA\\.nuget\\packages\\librehardwaremonitorlib\\0.9.6\\librehardwaremonitorlib.0.9.6.nupkg.sha512",
+    "C:\\Users\\AAA\\.nuget\\packages\\microsoft.net.illink.tasks\\9.0.17\\microsoft.net.illink.tasks.9.0.17.nupkg.sha512",
     "C:\\Users\\AAA\\.nuget\\packages\\mono.posix.netstandard\\1.0.0\\mono.posix.netstandard.1.0.0.nupkg.sha512",
     "C:\\Users\\AAA\\.nuget\\packages\\ramspdtoolkit-ndd\\1.4.2\\ramspdtoolkit-ndd.1.4.2.nupkg.sha512",
     "C:\\Users\\AAA\\.nuget\\packages\\runtime.android-arm.runtime.native.system.io.ports\\10.0.3\\runtime.android-arm.runtime.native.system.io.ports.10.0.3.nupkg.sha512",
@@ -32,5 +33,15 @@
     "C:\\Users\\AAA\\.nuget\\packages\\system.management\\10.0.2\\system.management.10.0.2.nupkg.sha512",
     "C:\\Users\\AAA\\.nuget\\packages\\system.threading.accesscontrol\\10.0.3\\system.threading.accesscontrol.10.0.3.nupkg.sha512"
   ],
-  "logs": []
+  "logs": [
+    {
+      "code": "NU1900",
+      "level": "Warning",
+      "message": "Paket güvenlik açığı verileri alınırken hata oluştu: Bilinen böyle bir ana bilgisayar yok. (api.nuget.org:443)",
+      "projectPath": "C:\\Users\\AAA\\Desktop\\Ben\\DevProjects\\PCstats\\PCStatsWidget\\PCStatsWidget.csproj",
+      "warningLevel": 1,
+      "filePath": "C:\\Users\\AAA\\Desktop\\Ben\\DevProjects\\PCstats\\PCStatsWidget\\PCStatsWidget.csproj",
+      "targetGraphs": []
+    }
+  ]
 }

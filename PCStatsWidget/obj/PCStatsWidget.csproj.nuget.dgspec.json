@@ -53,6 +53,12 @@
             "LibreHardwareMonitorLib": {
               "target": "Package",
               "version": "[0.9.6, )"
+            },
+            "Microsoft.NET.ILLink.Tasks": {
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[9.0.17, )",
+              "autoReferenced": true
             }
           },
           "imports": [
@@ -75,6 +81,11 @@
             }
           },
           "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.315/PortableRuntimeIdentifierGraph.json"
+        }
+      },
+      "runtimes": {
+        "win-x64": {
+          "#import": []
         }
       }
     }

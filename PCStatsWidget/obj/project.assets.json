@@ -75,6 +75,12 @@
           }
         }
       },
+      "Microsoft.NET.ILLink.Tasks/9.0.17": {
+        "type": "package",
+        "build": {
+          "build/Microsoft.NET.ILLink.Tasks.props": {}
+        }
+      },
       "Mono.Posix.NETStandard/1.0.0": {
         "type": "package",
         "compile": {
@@ -1389,6 +1395,247 @@
           }
         }
       }
+    },
+    "net9.0-windows7.0/win-x64": {
+      "BlackSharp.Core/1.0.7": {
+        "type": "package",
+        "compile": {
+          "lib/net9.0/BlackSharp.Core.dll": {
+            "related": ".xml"
+          }
+        },
+        "runtime": {
+          "lib/net9.0/BlackSharp.Core.dll": {
+            "related": ".xml"
+          }
+        }
+      },
+      "DiskInfoToolkit/1.1.2": {
+        "type": "package",
+        "dependencies": {
+          "BlackSharp.Core": "1.0.7"
+        },
+        "compile": {
+          "lib/net9.0/DiskInfoToolkit.dll": {
+            "related": ".xml"
+          }
+        },
+        "runtime": {
+          "lib/net9.0/DiskInfoToolkit.dll": {
+            "related": ".xml"
+          }
+        }
+      },
+      "HidSharp/2.6.4": {
+        "type": "package",
+        "compile": {
+          "lib/netstandard2.0/HidSharp.dll": {
+            "related": ".pdb;.XML"
+          }
+        },
+        "runtime": {
+          "lib/netstandard2.0/HidSharp.dll": {
+            "related": ".pdb;.XML"
+          }
+        }
+      },
+      "LibreHardwareMonitorLib/0.9.6": {
+        "type": "package",
+        "dependencies": {
+          "DiskInfoToolkit": "1.1.2",
+          "HidSharp": "2.6.4",
+          "Mono.Posix.NETStandard": "1.0.0",
+          "RAMSPDToolkit-NDD": "1.4.2",
+          "System.IO.Ports": "10.0.3",
+          "System.Management": "10.0.2",
+          "System.Threading.AccessControl": "10.0.3"
+        },
+        "compile": {
+          "ref/net9.0/LibreHardwareMonitorLib.dll": {
+            "related": ".xml"
+          }
+        },
+        "runtime": {
+          "runtimes/win-x64/lib/net9.0/LibreHardwareMonitorLib.dll": {
+            "related": ".xml"
+          }
+        }
+      },
+      "Microsoft.NET.ILLink.Tasks/9.0.17": {
+        "type": "package",
+        "build": {
+          "build/Microsoft.NET.ILLink.Tasks.props": {}
+        }
+      },
+      "Mono.Posix.NETStandard/1.0.0": {
+        "type": "package",
+        "compile": {
+          "ref/netstandard2.0/Mono.Posix.NETStandard.dll": {}
+        },
+        "runtime": {
+          "runtimes/win-x64/lib/netstandard2.0/Mono.Posix.NETStandard.dll": {}
+        },
+        "native": {
+          "runtimes/win-x64/native/MonoPosixHelper.dll": {},
+          "runtimes/win-x64/native/libMonoPosixHelper.dll": {}
+        }
+      },
+      "RAMSPDToolkit-NDD/1.4.2": {
+        "type": "package",
+        "dependencies": {
+          "BlackSharp.Core": "1.0.4",
+          "System.Management": "10.0.0"
+        },
+        "compile": {
+          "lib/net9.0/RAMSPDToolkit-NDD.dll": {
+            "related": ".xml"
+          }
+        },
+        "runtime": {
+          "lib/net9.0/RAMSPDToolkit-NDD.dll": {
+            "related": ".xml"
+          }
+        }
+      },
+      "runtime.android-arm.runtime.native.System.IO.Ports/10.0.3": {
+        "type": "package"
+      },
+      "runtime.android-arm64.runtime.native.System.IO.Ports/10.0.3": {
+        "type": "package"
+      },
+      "runtime.android-x64.runtime.native.System.IO.Ports/10.0.3": {
+        "type": "package"
+      },
+      "runtime.android-x86.runtime.native.System.IO.Ports/10.0.3": {
+        "type": "package"
+      },
+      "runtime.linux-arm.runtime.native.System.IO.Ports/10.0.3": {
+        "type": "package"
+      },
+      "runtime.linux-arm64.runtime.native.System.IO.Ports/10.0.3": {
+        "type": "package"
+      },
+      "runtime.linux-bionic-arm64.runtime.native.System.IO.Ports/10.0.3": {
+        "type": "package"
+      },
+      "runtime.linux-bionic-x64.runtime.native.System.IO.Ports/10.0.3": {
+        "type": "package"
+      },
+      "runtime.linux-musl-arm.runtime.native.System.IO.Ports/10.0.3": {
+        "type": "package"
+      },
+      "runtime.linux-musl-arm64.runtime.native.System.IO.Ports/10.0.3": {
+        "type": "package"
+      },
+      "runtime.linux-musl-x64.runtime.native.System.IO.Ports/10.0.3": {
+        "type": "package"
+      },
+      "runtime.linux-x64.runtime.native.System.IO.Ports/10.0.3": {
+        "type": "package"
+      },
+      "runtime.maccatalyst-arm64.runtime.native.System.IO.Ports/10.0.3": {
+        "type": "package"
+      },
+      "runtime.maccatalyst-x64.runtime.native.System.IO.Ports/10.0.3": {
+        "type": "package"
+      },
+      "runtime.native.System.IO.Ports/10.0.3": {
+        "type": "package",
+        "dependencies": {
+          "runtime.android-arm.runtime.native.System.IO.Ports": "10.0.3",
+          "runtime.android-arm64.runtime.native.System.IO.Ports": "10.0.3",
+          "runtime.android-x64.runtime.native.System.IO.Ports": "10.0.3",
+          "runtime.android-x86.runtime.native.System.IO.Ports": "10.0.3",
+          "runtime.linux-arm.runtime.native.System.IO.Ports": "10.0.3",
+          "runtime.linux-arm64.runtime.native.System.IO.Ports": "10.0.3",
+          "runtime.linux-bionic-arm64.runtime.native.System.IO.Ports": "10.0.3",
+          "runtime.linux-bionic-x64.runtime.native.System.IO.Ports": "10.0.3",
+          "runtime.linux-musl-arm.runtime.native.System.IO.Ports": "10.0.3",
+          "runtime.linux-musl-arm64.runtime.native.System.IO.Ports": "10.0.3",
+          "runtime.linux-musl-x64.runtime.native.System.IO.Ports": "10.0.3",
+          "runtime.linux-x64.runtime.native.System.IO.Ports": "10.0.3",
+          "runtime.maccatalyst-arm64.runtime.native.System.IO.Ports": "10.0.3",
+          "runtime.maccatalyst-x64.runtime.native.System.IO.Ports": "10.0.3",
+          "runtime.osx-arm64.runtime.native.System.IO.Ports": "10.0.3",
+          "runtime.osx-x64.runtime.native.System.IO.Ports": "10.0.3"
+        }
+      },
+      "runtime.osx-arm64.runtime.native.System.IO.Ports/10.0.3": {
+        "type": "package"
+      },
+      "runtime.osx-x64.runtime.native.System.IO.Ports/10.0.3": {
+        "type": "package"
+      },
+      "System.CodeDom/10.0.2": {
+        "type": "package",
+        "compile": {
+          "lib/net9.0/System.CodeDom.dll": {
+            "related": ".xml"
+          }
+        },
+        "runtime": {
+          "lib/net9.0/System.CodeDom.dll": {
+            "related": ".xml"
+          }
+        },
+        "build": {
+          "buildTransitive/net8.0/_._": {}
+        }
+      },
+      "System.IO.Ports/10.0.3": {
+        "type": "package",
+        "dependencies": {
+          "runtime.native.System.IO.Ports": "10.0.3"
+        },
+        "compile": {
+          "lib/net9.0/System.IO.Ports.dll": {
+            "related": ".xml"
+          }
+        },
+        "runtime": {
+          "runtimes/win/lib/net9.0/System.IO.Ports.dll": {
+            "related": ".xml"
+          }
+        },
+        "build": {
+          "buildTransitive/net8.0/_._": {}
+        }
+      },
+      "System.Management/10.0.2": {
+        "type": "package",
+        "dependencies": {
+          "System.CodeDom": "10.0.2"
+        },
+        "compile": {
+          "lib/net9.0/System.Management.dll": {
+            "related": ".xml"
+          }
+        },
+        "runtime": {
+          "runtimes/win/lib/net9.0/System.Management.dll": {
+            "related": ".xml"
+          }
+        },
+        "build": {
+          "buildTransitive/net8.0/_._": {}
+        }
+      },
+      "System.Threading.AccessControl/10.0.3": {
+        "type": "package",
+        "compile": {
+          "lib/net9.0/System.Threading.AccessControl.dll": {
+            "related": ".xml"
+          }
+        },
+        "runtime": {
+          "runtimes/win/lib/net9.0/System.Threading.AccessControl.dll": {
+            "related": ".xml"
+          }
+        },
+        "build": {
+          "buildTransitive/net8.0/_._": {}
+        }
+      }
     }
   },
   "libraries": {
@@ -1511,6 +1758,57 @@
         "runtimes/win-x86/lib/net9.0/LibreHardwareMonitorLib.xml",
         "runtimes/win-x86/lib/netstandard2.0/LibreHardwareMonitorLib.dll",
         "runtimes/win-x86/lib/netstandard2.0/LibreHardwareMonitorLib.xml"
+      ]
+    },
+    "Microsoft.NET.ILLink.Tasks/9.0.17": {
+      "sha512": "P5qY/hIYMlo0+QRM0W3Gd/SRf20TX+z5W5NwpdzkOk0FtgcbSTNwNcYBRNDgfThFcLpcDFslz65RcGqWOq00/w==",
+      "type": "package",
+      "path": "microsoft.net.illink.tasks/9.0.17",
+      "hasTools": true,
+      "files": [
+        ".nupkg.metadata",
+        ".signature.p7s",
+        "Icon.png",
+        "LICENSE.TXT",
+        "Sdk/Sdk.props",
+        "THIRD-PARTY-NOTICES.TXT",
+        "analyzers/dotnet/cs/ILLink.CodeFixProvider.dll",
+        "analyzers/dotnet/cs/ILLink.RoslynAnalyzer.dll",
+        "build/Microsoft.NET.ILLink.Analyzers.props",
+        "build/Microsoft.NET.ILLink.Tasks.props",
+        "build/Microsoft.NET.ILLink.targets",
+        "microsoft.net.illink.tasks.9.0.17.nupkg.sha512",
+        "microsoft.net.illink.tasks.nuspec",
+        "tools/net472/ILLink.Tasks.dll",
+        "tools/net472/ILLink.Tasks.dll.config",
+        "tools/net472/Mono.Cecil.Mdb.dll",
+        "tools/net472/Mono.Cecil.Pdb.dll",
+        "tools/net472/Mono.Cecil.Rocks.dll",
+        "tools/net472/Mono.Cecil.dll",
+        "tools/net472/Sdk/Sdk.props",
+        "tools/net472/System.Buffers.dll",
+        "tools/net472/System.Collections.Immutable.dll",
+        "tools/net472/System.Memory.dll",
+        "tools/net472/System.Numerics.Vectors.dll",
+        "tools/net472/System.Reflection.Metadata.dll",
+        "tools/net472/System.Runtime.CompilerServices.Unsafe.dll",
+        "tools/net472/build/Microsoft.NET.ILLink.Analyzers.props",
+        "tools/net472/build/Microsoft.NET.ILLink.Tasks.props",
+        "tools/net472/build/Microsoft.NET.ILLink.targets",
+        "tools/net9.0/ILLink.Tasks.deps.json",
+        "tools/net9.0/ILLink.Tasks.dll",
+        "tools/net9.0/Mono.Cecil.Mdb.dll",
+        "tools/net9.0/Mono.Cecil.Pdb.dll",
+        "tools/net9.0/Mono.Cecil.Rocks.dll",
+        "tools/net9.0/Mono.Cecil.dll",
+        "tools/net9.0/Sdk/Sdk.props",
+        "tools/net9.0/build/Microsoft.NET.ILLink.Analyzers.props",
+        "tools/net9.0/build/Microsoft.NET.ILLink.Tasks.props",
+        "tools/net9.0/build/Microsoft.NET.ILLink.targets",
+        "tools/net9.0/illink.deps.json",
+        "tools/net9.0/illink.dll",
+        "tools/net9.0/illink.runtimeconfig.json",
+        "useSharedDesignerContext.txt"
       ]
     },
     "Mono.Posix.NETStandard/1.0.0": {
@@ -2221,7 +2519,8 @@
   },
   "projectFileDependencyGroups": {
     "net9.0-windows7.0": [
-      "LibreHardwareMonitorLib >= 0.9.6"
+      "LibreHardwareMonitorLib >= 0.9.6",
+      "Microsoft.NET.ILLink.Tasks >= 9.0.17"
     ]
   },
   "packageFolders": {
@@ -2277,6 +2576,12 @@
           "LibreHardwareMonitorLib": {
             "target": "Package",
             "version": "[0.9.6, )"
+          },
+          "Microsoft.NET.ILLink.Tasks": {
+            "suppressParent": "All",
+            "target": "Package",
+            "version": "[9.0.17, )",
+            "autoReferenced": true
           }
         },
         "imports": [
@@ -2300,6 +2605,19 @@
         },
         "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.315/PortableRuntimeIdentifierGraph.json"
       }
+    },
+    "runtimes": {
+      "win-x64": {
+        "#import": []
+      }
     }
-  }
+  },
+  "logs": [
+    {
+      "code": "NU1900",
+      "level": "Warning",
+      "warningLevel": 1,
+      "message": "Paket güvenlik açığı verileri alınırken hata oluştu: Bilinen böyle bir ana bilgisayar yok. (api.nuget.org:443)"
+    }
+  ]
 }
