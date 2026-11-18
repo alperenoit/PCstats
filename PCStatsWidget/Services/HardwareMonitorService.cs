@@ -32,37 +32,21 @@ public sealed class HardwareMonitorService : IDisposable
 
     private readonly Computer _computer;
     private readonly UpdateVisitor _updateVisitor = new UpdateVisitor();
-    private readonly PerformanceCounter? _cpuUtilityCounter;
+    private PerformanceCounter? _cpuUtilityCounter;
+    private bool _perfCounterWarmedUp;
 
     // Win32 GetSystemTimes fallback for CPU usage
     private ulong _lastIdleTime;
     private ulong _lastKernelTime;
     private ulong _lastUserTime;
+    private float _lastValidCpuUsage;
 
     public bool IsAdministrator { get; }
 
     public HardwareMonitorService()
     {
         IsAdministrator = CheckIsAdministrator();
-
-        // Windows 11 Görev Yöneticisi ile birebir aynı CPU kullanım sayacı (% Processor Utility)
-        try
-        {
-            _cpuUtilityCounter = new PerformanceCounter("Processor Information", "% Processor Utility", "_Total", true);
-            _ = _cpuUtilityCounter.NextValue();
-        }
-        catch
-        {
-            try
-            {
-                _cpuUtilityCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total", true);
-                _ = _cpuUtilityCounter.NextValue();
-            }
-            catch
-            {
-                _cpuUtilityCounter = null;
-            }
-        }
+        InitCpuPerformanceCounter();
 
         _computer = new Computer
         {
@@ -78,10 +62,33 @@ public sealed class HardwareMonitorService : IDisposable
         }
         catch
         {
-            // Sürücü yüklenemezse diğer kaynaklarla devam et
+            // Sürücü (WinRing0) HVCI nedeniyle engellenirse diğer kanallarla devam et
         }
 
         UpdateWin32CpuUsage();
+    }
+
+    private void InitCpuPerformanceCounter()
+    {
+        try
+        {
+            _cpuUtilityCounter = new PerformanceCounter("Processor Information", "% Processor Utility", "_Total", true);
+            _ = _cpuUtilityCounter.NextValue();
+            _perfCounterWarmedUp = true;
+        }
+        catch
+        {
+            try
+            {
+                _cpuUtilityCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total", true);
+                _ = _cpuUtilityCounter.NextValue();
+                _perfCounterWarmedUp = true;
+            }
+            catch
+            {
+                _cpuUtilityCounter = null;
+            }
+        }
     }
 
     public static bool CheckIsAdministrator()
@@ -154,20 +161,30 @@ public sealed class HardwareMonitorService : IDisposable
             // Sensör okuma hatası olursa yedeklere geç
         }
 
-        // 1. CPU Kullanım Yüzdesi (Windows Görev Yöneticisi % Processor Utility -> LHM -> Win32)
+        // 1. CPU Kullanım Yüzdesi (Görev Yöneticisi % Processor Utility -> Win32 GetSystemTimes -> LHM)
         float win32Cpu = UpdateWin32CpuUsage();
         float? perfCounterCpu = ReadPerfCounterCpuUsage();
-        if (perfCounterCpu is > 0.1f)
+
+        if (perfCounterCpu.HasValue && perfCounterCpu.Value > 0.05f)
         {
-            snapshot.CpuUsage = Math.Clamp(perfCounterCpu.Value, 0f, 100f);
+            snapshot.CpuUsage = perfCounterCpu.Value;
         }
-        else if (lhmCpuLoad is > 0.1f)
+        else if (win32Cpu > 0.05f)
+        {
+            snapshot.CpuUsage = win32Cpu;
+        }
+        else if (lhmCpuLoad.HasValue && lhmCpuLoad.Value > 0.05f)
         {
             snapshot.CpuUsage = Math.Clamp(lhmCpuLoad.Value, 0f, 100f);
         }
         else
         {
-            snapshot.CpuUsage = win32Cpu;
+            snapshot.CpuUsage = _lastValidCpuUsage;
+        }
+
+        if (snapshot.CpuUsage > 0.05f)
+        {
+            _lastValidCpuUsage = snapshot.CpuUsage;
         }
 
         // 2. GPU Seçimi (Harici GPU varsa öncelikli)
@@ -192,7 +209,7 @@ public sealed class HardwareMonitorService : IDisposable
         // 3. HP Victus / OMEN BIOS WMI Üzerinden Gerçek Fan RPM ve CPU Sıcaklığı Okuma
         ReadHpVictusBiosSensors(out int hpFan1Rpm, out int hpFan2Rpm, out float? hpBiosCpuTemp);
 
-        // 4. CPU Sıcaklığı Seçimi (LHM Intel MSR -> HP BIOS WMI EC Sensörü -> Anakart)
+        // 4. CPU Sıcaklığı Seçimi (LHM Intel/AMD MSR -> HP BIOS WMI -> Anakart -> ACPI ThermalZone)
         if (lhmCpuTemp is > 20f and < 115f)
         {
             snapshot.CpuTemp = lhmCpuTemp.Value;
@@ -207,7 +224,8 @@ public sealed class HardwareMonitorService : IDisposable
         }
         else
         {
-            snapshot.CpuTemp = null;
+            // HVCI/Defender nedeniyle WinRing0 yüklenemediğinde akıllı ACPI ThermalZone filtresi (10°C dummy değerlerini atlar)
+            snapshot.CpuTemp = ReadAcpiThermalZoneTemp();
         }
 
         // 5. Fan Hızı Seçimi (HP BIOS WMI Gerçek Fan RPM -> LHM Fan RPM -> LHM Fan Control %)
@@ -250,7 +268,7 @@ public sealed class HardwareMonitorService : IDisposable
 
     private float? ReadPerfCounterCpuUsage()
     {
-        if (_cpuUtilityCounter == null) return null;
+        if (_cpuUtilityCounter == null || !_perfCounterWarmedUp) return null;
         try
         {
             float val = _cpuUtilityCounter.NextValue();
@@ -264,6 +282,74 @@ public sealed class HardwareMonitorService : IDisposable
             // Sayaç okunamazsa geç
         }
         return null;
+    }
+
+    private static float? ReadAcpiThermalZoneTemp()
+    {
+        float? bestTemp = null;
+
+        // 1. Yönetici izniyle MSAcpi_ThermalZoneTemperature (tüm termal bölgeler içinden > 20°C gerçek değerleri seç)
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                @"\\.\root\wmi",
+                "SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature");
+
+            foreach (ManagementObject obj in searcher.Get())
+            {
+                if (obj["CurrentTemperature"] is uint raw && raw > 2932) // > 20°C (293.2 K)
+                {
+                    float celsius = (raw / 10f) - 273.15f;
+                    if (celsius is > 20f and < 115f)
+                    {
+                        if (!bestTemp.HasValue || celsius > bestTemp.Value)
+                            bestTemp = celsius;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // MSAcpi erişilemezse CIMV2'ye geç
+        }
+
+        if (bestTemp.HasValue) return bestTemp;
+
+        // 2. CIMV2 ThermalZoneInformation (10°C / 2832 dummy değerlerini filtreler, gerçek TZ00/CPUZ değerini alır)
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                @"\\.\root\CIMV2",
+                "SELECT HighPrecisionTemperature, Temperature FROM Win32_PerfFormattedData_Counters_ThermalZoneInformation");
+
+            foreach (ManagementObject obj in searcher.Get())
+            {
+                if (obj["HighPrecisionTemperature"] is uint hpTemp && hpTemp > 2932) // > 20°C
+                {
+                    float celsius = (hpTemp / 10f) - 273.15f;
+                    if (celsius is > 20f and < 115f)
+                    {
+                        if (!bestTemp.HasValue || celsius > bestTemp.Value)
+                            bestTemp = celsius;
+                    }
+                }
+                else if (obj["Temperature"] is uint temp && temp > 293) // > 20°C
+                {
+                    float celsius = temp - 273.15f;
+                    if (celsius is > 20f and < 115f)
+                    {
+                        if (!bestTemp.HasValue || celsius > bestTemp.Value)
+                            bestTemp = celsius;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // WMI termal bölge okunamazsa null dön
+        }
+
+        return bestTemp;
     }
 
     private static void ReadHpVictusBiosSensors(out int fan1Rpm, out int fan2Rpm, out float? cpuTemp)
@@ -313,13 +399,18 @@ public sealed class HardwareMonitorService : IDisposable
                 }
             }
 
-            // B) CPU Sıcaklığı Okuma: CommandType = 35 (0x23 - GetSensorValue(0))
-            byte[]? tempData = InvokeHpBiosMethod(biosInstance, dataInClass, HP_WMI_GM_COMMAND, HP_CMD_GET_SENSOR_TEMP, new byte[] { 0, 0, 0, 0 }, "hpqBIOSInt4")
-                            ?? InvokeHpBiosMethod(biosInstance, dataInClass, HP_WMI_GM_COMMAND, HP_CMD_GET_SENSOR_TEMP, new byte[] { 0, 0, 0, 0 }, "hpqBIOSInt128");
-
-            if (tempData != null && tempData.Length >= 1 && tempData[0] is > 20 and < 115)
+            // B) CPU Sıcaklığı Okuma: CommandType = 35 (0x23 - GetSensorValue)
+            for (byte sensorId = 0; sensorId <= 2; sensorId++)
             {
-                cpuTemp = tempData[0];
+                byte[] payload = new byte[] { sensorId, 0, 0, 0 };
+                byte[]? tempData = InvokeHpBiosMethod(biosInstance, dataInClass, HP_WMI_GM_COMMAND, HP_CMD_GET_SENSOR_TEMP, payload, "hpqBIOSInt4")
+                                ?? InvokeHpBiosMethod(biosInstance, dataInClass, HP_WMI_GM_COMMAND, HP_CMD_GET_SENSOR_TEMP, payload, "hpqBIOSInt128");
+
+                if (tempData != null && tempData.Length >= 1 && tempData[0] is > 20 and < 115)
+                {
+                    cpuTemp = tempData[0];
+                    break;
+                }
             }
         }
         catch
@@ -343,17 +434,7 @@ public sealed class HardwareMonitorService : IDisposable
             dataIn["Command"] = command;
             dataIn["CommandType"] = commandType;
             dataIn["Size"] = (uint)inputPayload.Length;
-
-            // hpqBData alanını doldur
-            foreach (PropertyData prop in dataIn.Properties)
-            {
-                if (prop.Name.Equals("hpqBData", StringComparison.OrdinalIgnoreCase) ||
-                    prop.Name.Equals("Data", StringComparison.OrdinalIgnoreCase))
-                {
-                    prop.Value = inputPayload;
-                    break;
-                }
-            }
+            dataIn["hpqBData"] = inputPayload;
 
             using ManagementBaseObject inParams = biosInstance.GetMethodParameters(methodName);
             inParams["InData"] = dataIn;
@@ -361,12 +442,16 @@ public sealed class HardwareMonitorService : IDisposable
             using ManagementBaseObject? outParams = biosInstance.InvokeMethod(methodName, inParams, null);
             if (outParams?["OutData"] is ManagementBaseObject outData)
             {
-                foreach (PropertyData prop in outData.Properties)
+                // rwReturnCode 0 ise BIOS çağrısı başarılıdır
+                if (outData["rwReturnCode"] is uint rc && rc != 0)
                 {
-                    if (prop.Value is byte[] bytes && bytes.Length > 0)
-                    {
-                        return bytes;
-                    }
+                    return null;
+                }
+
+                // Sign dizisi yerine doğrudan Data dizisini oku
+                if (outData["Data"] is byte[] dataBytes && dataBytes.Length > 0)
+                {
+                    return dataBytes;
                 }
             }
         }

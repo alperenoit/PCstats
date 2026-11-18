@@ -2611,13 +2611,5 @@
         "#import": []
       }
     }
-  },
-  "logs": [
-    {
-      "code": "NU1900",
-      "level": "Warning",
-      "warningLevel": 1,
-      "message": "Paket güvenlik açığı verileri alınırken hata oluştu: Bilinen böyle bir ana bilgisayar yok. (api.nuget.org:443)"
-    }
-  ]
+  }
 }

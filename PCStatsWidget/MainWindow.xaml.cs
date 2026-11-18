@@ -17,6 +17,7 @@ public partial class MainWindow : Window
     private readonly HardwareMonitorService _hardwareService;
     private readonly FpsMonitorService _fpsService;
     private readonly PingService _pingService;
+    private readonly NetworkMonitorService _networkService;
 
     private readonly DispatcherTimer _metricsTimer;
     private readonly DispatcherTimer _pingTimer;
@@ -47,6 +48,7 @@ public partial class MainWindow : Window
         _hardwareService = new HardwareMonitorService();
         _fpsService = new FpsMonitorService();
         _pingService = new PingService();
+        _networkService = new NetworkMonitorService();
 
         // Sağ üst köşeye yakın varsayılan başlangıç pozisyonu
         double screenWidth = SystemParameters.WorkArea.Width;
@@ -141,13 +143,14 @@ public partial class MainWindow : Window
 
         try
         {
-            // Arka plan iş parçacığında donanım sensörlerini ve FPS'i oku
-            var (hw, fps, fpsSource) = await Task.Run(() =>
+            // Arka plan iş parçacığında donanım sensörlerini, ağ hızını ve FPS'i oku
+            var (hw, net, fps, fpsSource) = await Task.Run(() =>
             {
                 var snapshot = _hardwareService.ReadSnapshot();
+                var netSnapshot = _networkService.ReadSnapshot();
                 int currentFps = _fpsService.GetCurrentFps();
                 string src = _fpsService.FpsSource;
-                return (snapshot, currentFps, src);
+                return (snapshot, netSnapshot, currentFps, src);
             });
 
             // 1. FPS Güncellemesi
@@ -168,6 +171,7 @@ public partial class MainWindow : Window
             string cpuTempStr = hw.CpuTemp.HasValue ? $"{hw.CpuTemp.Value:F0}°C" : "N/A";
             TxtCpuTemp.Text = cpuTempStr;
             TxtCpuTemp.Foreground = GetTemperatureBrush(hw.CpuTemp);
+            TxtCompactCpu.Text = $"{hw.CpuUsage:F0}%  {cpuTempStr}";
 
             // 3. GPU Güncellemesi
             TxtGpuName.Text = hw.GpuName;
@@ -186,6 +190,11 @@ public partial class MainWindow : Window
 
             double fanBarValue = hw.FanControlPercent ?? Math.Clamp(hw.FanRpm / 30.0, 0, 100);
             BarFanSpeed.Value = fanBarValue;
+
+            // 5. Ağ (Download / Upload) Güncellemesi
+            TxtDownloadSpeed.Text = net.DownloadText;
+            TxtUploadSpeed.Text = net.UploadText;
+            TxtCompactNet.Text = $"⬇{net.CompactDownloadText} ⬆{net.CompactUploadText}";
         }
         finally
         {

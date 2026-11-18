@@ -32,6 +32,8 @@ public partial class MainWindow
     internal ProgressBar BarGpuUsage = null!;
     internal TextBlock TxtFanSpeed = null!;
     internal ProgressBar BarFanSpeed = null!;
+    internal TextBlock TxtDownloadSpeed = null!;
+    internal TextBlock TxtUploadSpeed = null!;
     internal StackPanel FooterControlsPanel = null!;
     internal TextBlock TxtOpacityVal = null!;
     internal Slider SliderOpacity = null!;
@@ -41,6 +43,7 @@ public partial class MainWindow
     internal TextBlock TxtCompactGpu = null!;
     internal TextBlock TxtCompactFan = null!;
     internal TextBlock TxtCompactPing = null!;
+    internal TextBlock TxtCompactNet = null!;
     internal StackPanel CompactButtonsPanel = null!;
 
     private bool _contentLoaded;
@@ -396,6 +399,57 @@ public partial class MainWindow
         fanCard.Child = fanStack;
         DetailedPanel.Children.Add(fanCard);
 
+        // AĞ (DOWNLOAD / UPLOAD) Kartı
+        var netCard = CreateCardBorder(new Thickness(0, 0, 0, 8));
+        var netGrid = new Grid();
+        netGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        netGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var dlStack = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        dlStack.Children.Add(new TextBlock
+        {
+            Text = "⬇ DL ",
+            FontSize = 10.5,
+            FontWeight = FontWeights.Bold,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x34, 0xD3, 0x99)),
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        TxtDownloadSpeed = new TextBlock
+        {
+            Text = "0 KB/s",
+            FontSize = 12.5,
+            FontWeight = FontWeights.Bold,
+            Foreground = new SolidColorBrush(Color.FromRgb(0xF8, 0xFA, 0xFC)),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        dlStack.Children.Add(TxtDownloadSpeed);
+        Grid.SetColumn(dlStack, 0);
+        netGrid.Children.Add(dlStack);
+
+        var ulStack = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
+        ulStack.Children.Add(new TextBlock
+        {
+            Text = "⬆ UL ",
+            FontSize = 10.5,
+            FontWeight = FontWeights.Bold,
+            Foreground = new SolidColorBrush(Color.FromRgb(0xFB, 0x92, 0x3C)),
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        TxtUploadSpeed = new TextBlock
+        {
+            Text = "0 KB/s",
+            FontSize = 12.5,
+            FontWeight = FontWeights.Bold,
+            Foreground = new SolidColorBrush(Color.FromRgb(0xF8, 0xFA, 0xFC)),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        ulStack.Children.Add(TxtUploadSpeed);
+        Grid.SetColumn(ulStack, 1);
+        netGrid.Children.Add(ulStack);
+
+        netCard.Child = netGrid;
+        DetailedPanel.Children.Add(netCard);
+
         // Alt Kontrol Paneli (Saydamlık & Kısayollar)
         FooterControlsPanel = new StackPanel { Margin = new Thickness(2, 2, 2, 0) };
         var opacityDock = new DockPanel { Margin = new Thickness(0, 0, 0, 4) };
@@ -472,6 +526,11 @@ public partial class MainWindow
         compactStack.Children.Add(CreateCompactLabel("PING ", Color.FromRgb(0x94, 0xA3, 0xB8)));
         TxtCompactPing = CreateCompactValue("-- ms", Color.FromRgb(0x38, 0xBD, 0xF8));
         compactStack.Children.Add(TxtCompactPing);
+        compactStack.Children.Add(CreateCompactSeparator());
+
+        compactStack.Children.Add(CreateCompactLabel("NET ", Color.FromRgb(0x34, 0xD3, 0x99)));
+        TxtCompactNet = CreateCompactValue("⬇0K ⬆0K", Color.FromRgb(0xF8, 0xFA, 0xFC));
+        compactStack.Children.Add(TxtCompactNet);
 
         CompactButtonsPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(10, 0, 0, 0) };
         CompactButtonsPanel.Children.Add(CreateHeaderButton("▤", "Detaylı Görünüme Dön (F9)", BtnToggleMode_Click));

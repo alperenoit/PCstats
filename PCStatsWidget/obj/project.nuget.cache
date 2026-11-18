@@ -33,15 +33,5 @@
     "C:\\Users\\AAA\\.nuget\\packages\\system.management\\10.0.2\\system.management.10.0.2.nupkg.sha512",
     "C:\\Users\\AAA\\.nuget\\packages\\system.threading.accesscontrol\\10.0.3\\system.threading.accesscontrol.10.0.3.nupkg.sha512"
   ],
-  "logs": [
-    {
-      "code": "NU1900",
-      "level": "Warning",
-      "message": "Paket güvenlik açığı verileri alınırken hata oluştu: Bilinen böyle bir ana bilgisayar yok. (api.nuget.org:443)",
-      "projectPath": "C:\\Users\\AAA\\Desktop\\Ben\\DevProjects\\PCstats\\PCStatsWidget\\PCStatsWidget.csproj",
-      "warningLevel": 1,
-      "filePath": "C:\\Users\\AAA\\Desktop\\Ben\\DevProjects\\PCstats\\PCStatsWidget\\PCStatsWidget.csproj",
-      "targetGraphs": []
-    }
-  ]
+  "logs": []
 }
